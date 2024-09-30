@@ -214,23 +214,38 @@ function getFileAndReturnResponse()
     }
 
     sendHttpGet(data.url, (statusCode, originHeaders, file) => {
+        const excludedHeaders = [
+            'transfer-encoding'
+        ];
+
+        const filteredOriginHeaders = {};
+        for (const key in originHeaders) {
+            if (excludedHeaders.indexOf(key.toLowerCase()) === -1) {
+                filteredOriginHeaders[key] = originHeaders[key];
+            }else{
+                if (isDebug) {
+                    logToConsole('filtered Header', key, originHeaders[key]);
+                }
+            }
+        }
+
         if (data.responseStatusCode) {
             templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
-            templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, originHeaders);
+            templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
 
-            sendResponse(makeInteger(data.responseStatusCode), originHeaders, file);
+            sendResponse(makeInteger(data.responseStatusCode), filteredOriginHeaders, file);
         } else {
             if (statusCode >= 200 && statusCode < 300) {
                 templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
-                templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, originHeaders);
+                templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
 
-                sendResponse(statusCode, originHeaders, file);
+                sendResponse(statusCode, filteredOriginHeaders, file);
             } else {
                 if (isDebug) {
                     logToConsole('Failed to download a file: ', path);
                 }
 
-                sendResponse(statusCode, originHeaders, file);
+                sendResponse(statusCode, filteredOriginHeaders, file);
             }
         }
     }, requestSettings);

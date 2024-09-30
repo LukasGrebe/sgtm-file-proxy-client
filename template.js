@@ -69,7 +69,7 @@ function getFileAndReturnResponse()
 
         if (data.responseStatusCode) {
             templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
-            templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders)
+            templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
 
             sendResponse(makeInteger(data.responseStatusCode), filteredOriginHeaders, file);
         } else {

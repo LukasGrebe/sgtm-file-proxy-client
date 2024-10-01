@@ -1,5 +1,7 @@
 homepage: "https://stape.io/"
 versions:
+  - sha: fde97c77c3d1f758481e5728481c95ef2fa28c58
+    changeNotes: Fix issue with proxying headers.
   - sha: d241ecfb75185b464e407937c183beb6837eff3d
     changeNotes: Add ability set response status code.
   - sha: 3b3d57cf11ee5dd4b3091a77f90445814dd753b2

@@ -62,6 +62,19 @@ ___TEMPLATE_PARAMETERS___
   },
   {
     "type": "TEXT",
+    "name": "allowOrigin",
+    "displayName": "regex of Allowed Origins",
+    "simpleValueType": true,
+    "help": "If the Origin Header of an OPTIONS request matches the regex, the Proxy will respond with a header allowing this Origin to make a request",
+    "valueValidators": [
+      {
+        "type": "NON_EMPTY"
+      }
+    ],
+    "defaultValue": ".*"
+  },
+  {
+    "type": "TEXT",
     "name": "contentType",
     "displayName": "Response Content-Type",
     "simpleValueType": true,
@@ -162,14 +175,18 @@ ___SANDBOXED_JS_FOR_SERVER___
 
 const returnResponse = require('returnResponse');
 const getRequestPath = require('getRequestPath');
+const getRequestMethod = require('getRequestMethod');
+const getRequestHeader = require('getRequestHeader');
+const getRequestBody = require('getRequestBody');
 const templateDataStorage = require('templateDataStorage');
 const setResponseStatus = require('setResponseStatus');
 const setResponseHeader = require('setResponseHeader');
 const setResponseBody = require('setResponseBody');
-const sendHttpGet = require('sendHttpGet');
+const sendHttpRequest = require('sendHttpRequest');
 const makeTableMap = require('makeTableMap');
 const sha256Sync = require('sha256Sync');
 const makeInteger = require('makeInteger');
+const createRegex = require('createRegex');
 
 const logToConsole = require('logToConsole');
 const getContainerVersion = require('getContainerVersion');
@@ -177,6 +194,7 @@ const containerVersion = getContainerVersion();
 const isDebug = containerVersion.debugMode;
 
 const path = getRequestPath();
+const method = getRequestMethod().toUpperCase();
 const cacheKey = sha256Sync(data.url);
 
 if (path === data.path) {
@@ -186,7 +204,7 @@ if (path === data.path) {
 
 function runClient()
 {
-    if (data.useCache) {
+    if (data.useCache && (method === 'GET' || method === 'OPTIONS')) {
         const cachedFile = templateDataStorage.getItemCopy('proxy_' + cacheKey);
 
         if (!cachedFile) {
@@ -203,17 +221,30 @@ function runClient()
 
 function getFileAndReturnResponse()
 {
-    let requestSettings = {};
+    let requestSettings = {
+        method: method,
+    };
 
     if (data.requestHeaders) {
         requestSettings.headers = makeTableMap(data.requestHeaders, 'name', 'value');
+    }
+
+    if (method === 'POST') {
+        //ensure post requests use the request's content-type
+        if (!requestSettings.headers) {
+            requestSettings.headers = {};
+        }
+        requestSettings.headers['Content-Type'] = getRequestHeader('Content-Type');
     }
 
     if (data.requestTimeout) {
         requestSettings.timeout = data.requestTimeout;
     }
 
-    sendHttpGet(data.url, (statusCode, originHeaders, file) => {
+    sendHttpRequest(data.url, requestSettings, getRequestBody()).then((result) => {
+        const statusCode = result.statusCode;
+        const originHeaders = result.headers;
+        const file = result.body;
         const excludedHeaders = [
             'transfer-encoding'
         ];
@@ -230,15 +261,18 @@ function getFileAndReturnResponse()
         }
 
         if (data.responseStatusCode) {
-            templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
-            templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
+            if (data.useCache && method !== 'POST') {
+                templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
+                templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
+            }
 
             sendResponse(makeInteger(data.responseStatusCode), filteredOriginHeaders, file);
         } else {
             if (statusCode >= 200 && statusCode < 300) {
-                templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
-                templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
-
+                if (data.useCache && method !== 'POST') {
+                    templateDataStorage.setItemCopy('proxy_' + cacheKey, file);
+                    templateDataStorage.setItemCopy('proxy_headers_' + cacheKey, filteredOriginHeaders);
+                }
                 sendResponse(statusCode, filteredOriginHeaders, file);
             } else {
                 if (isDebug) {
@@ -254,28 +288,40 @@ function getFileAndReturnResponse()
 
 function sendResponse(statusCode, originHeaders, file)
 {
-    if (statusCode === 200) {
-        if (data.useOriginHeaders && originHeaders) {
-            for (let headerKey in originHeaders) {
-                setResponseHeader(headerKey, originHeaders[headerKey]);
-            }
-        }
-
-        if (data.responseHeaders) {
-            let responseHeaders = makeTableMap(data.responseHeaders, 'name', 'value');
-
-            for (let headerKey in responseHeaders) {
-                setResponseHeader(headerKey, responseHeaders[headerKey]);
-            }
-        }
-
-        if (data.contentType) {
-            setResponseHeader('content-type', data.contentType);
+    if (data.useOriginHeaders && originHeaders) {
+        for (let headerKey in originHeaders) {
+            setResponseHeader(headerKey, originHeaders[headerKey]);
         }
     }
 
+    const requestOrigin = getRequestHeader('Origin');
+
+    const originRegex = createRegex(data.allowOrigin, 'i');
+    if (requestOrigin && requestOrigin.match(originRegex)) {
+        setResponseHeader('access-control-allow-origin', requestOrigin);
+    }
+
+    if (data.responseHeaders) {
+        let responseHeaders = makeTableMap(data.responseHeaders, 'name', 'value');
+
+        for (let headerKey in responseHeaders) {
+            setResponseHeader(headerKey, responseHeaders[headerKey]);
+        }
+    }
+
+    if (data.contentType) {
+        setResponseHeader('content-type', data.contentType);
+    }
+
+    if(method === 'OPTIONS') {
+        setResponseHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+        setResponseHeader('access-control-allow-headers', 'Content-Type, x-gtm-server-preview');
+        setResponseStatus(200);
+        returnResponse();
+    }
+
     setResponseStatus(statusCode);
-    setResponseBody(file);
+    if(file && method !== 'OPTIONS' && method !== 'HEAD') setResponseBody(file); //could be 204 no content
     returnResponse();
 }
 
